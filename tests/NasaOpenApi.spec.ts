@@ -66,7 +66,6 @@ test.describe('NeoWs (Near Earth Object Web Service) is a RESTful web service fo
         expect(response.status()).toBe(200);
         expect(response.ok()).toBeTruthy();
         expect(response.headers()['content-type']).toContain('application/json');
-
         expect(bodyResponse).toHaveProperty('near_earth_objects');
     });
 });
