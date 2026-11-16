@@ -1,20 +1,24 @@
 import { test, expect } from '@playwright/test';
 import { NeoFeedResponseJson } from '../dto/NeoFeed/NeoFeedResponseJson';
-import { NeoLookupResponseJson } from '../dto/NeoLookup/NeoLookupResponse';
+import { NeoLookupResponseJson } from '../dto/NeoLookup/NeoLookupResponseJson';
+import { NeoBrowseResponseJson } from '../dto/NeoBrowse/NeoBrowseResponseJson';
 
 const apiKey = 'C7jh7pPCpfBBRzz9jQnkg6wFdD6HqprnL9JwrWqB';
 const neoFeedApiUrl = 'https://api.nasa.gov/neo/rest/v1/feed';
 const neoLookUpApiUrl = 'https://api.nasa.gov/neo/rest/v1/neo';
+const neoBrowseApiUrl = 'https://api.nasa.gov/neo/rest/v1/neo/browse'
+const validRange = { start_date: '2026-10-01', end_date: '2026-10-07' };
 
-test.describe('NeoWs (Near Earth Object Web Service) is a RESTful web service for near earth Asteroid information. With NeoWs a user can: search for Asteroids based on their closest approach date to Earth, lookup a specific Asteroid with its NASA JPL small body id, as well as browse the overall data-set.', () => {
+//NeoWs API - positive tests
+test.describe('Positive test cases of  NeoWs (Near Earth Object Web Service).', () => {
     test('Verify Neo Feed API endpoint returns list of near earth asteroids by date range.', async ({ request }) => {
         const startDate = '2026-10-28';
         const endDate = '2026-11-04';
 
         const response = await request.get(neoFeedApiUrl, {
             params: {
-                    start_date: startDate,
-                    end_date: endDate,
+                    start_date: validRange.start_date,
+                    end_date: validRange.end_date,
                     api_key: apiKey,
             }
         });
@@ -26,15 +30,15 @@ test.describe('NeoWs (Near Earth Object Web Service) is a RESTful web service fo
         const objNeoFeedResponseJson = (await response.json()) as NeoFeedResponseJson;
 
         expect(objNeoFeedResponseJson.element_count).toBeGreaterThan(0);
-        expect(objNeoFeedResponseJson.near_earth_objects).toHaveProperty(startDate);
-        expect(objNeoFeedResponseJson.near_earth_objects).toHaveProperty(endDate);
+        expect(objNeoFeedResponseJson.near_earth_objects).toHaveProperty(validRange.start_date);
+        expect(objNeoFeedResponseJson.near_earth_objects).toHaveProperty(validRange.end_date);
         expect(objNeoFeedResponseJson.links).toBeDefined();
-        expect(objNeoFeedResponseJson.links.self).toContain(startDate);
-        expect(objNeoFeedResponseJson.links.self).toContain(endDate);
+        expect(objNeoFeedResponseJson.links.self).toContain(validRange.start_date);
+        expect(objNeoFeedResponseJson.links.self).toContain(validRange.end_date);
 
     });
 
-    test('Verify Neo Lookup API endpoint fetches asteroid information by NASA JPL small body id.', async({request}) => {
+    test('Verify Neo Lookup API endpoint fetches asteroid information by NASA JPL small body id.', async({ request }) => {
         const asteroidId = '3542519';
         const designationName = '2010 PK9';
 
@@ -57,16 +61,40 @@ test.describe('NeoWs (Near Earth Object Web Service) is a RESTful web service fo
         expect.soft(objNeoLookupResponseJson.orbital_data.orbit_class.orbit_class_type).toBeTruthy();
     });
 
-    test('Verify Neo Browse API endpoint returns a paginated list of all known near earth asteroids.', async({request}) => {
+    test('Verify Neo Browse API endpoint returns a paginated list of all known near earth asteroids.', async({ request }) => {
         const apiKey = 'C7jh7pPCpfBBRzz9jQnkg6wFdD6HqprnL9JwrWqB';
 
-        const response = await request.get(`https://api.nasa.gov/neo/rest/v1/neo/browse?api_key=${apiKey}`);
-        const bodyResponse = await response.json();
+        const response = await request.get(`${neoBrowseApiUrl}`, {
+            params: {
+                api_key: apiKey,
+            }   
+        });
 
-        expect(response.status()).toBe(200);
+        console.log(response.url());
+
+        expect(response.status()).toBe(200);   
         expect(response.ok()).toBeTruthy();
         expect(response.headers()['content-type']).toContain('application/json');
-        expect(bodyResponse).toHaveProperty('near_earth_objects');
+
+        const objNeoBrowseResponseJson = (await response.json()) as NeoBrowseResponseJson;
+
+        // Paginación coherente
+        expect(objNeoBrowseResponseJson.page.number).toBe(0);
+        expect(objNeoBrowseResponseJson.page.size).toBeGreaterThan(0);
+        expect(objNeoBrowseResponseJson.page.total_elements).toBeGreaterThan(0);
+        expect(objNeoBrowseResponseJson.page.total_pages).toBe(
+        Math.ceil(objNeoBrowseResponseJson.page.total_elements / objNeoBrowseResponseJson.page.size),);
+
+         // Primera página: sin previous, con next
+        expect(objNeoBrowseResponseJson.links.previous).toBeUndefined();
+        expect(objNeoBrowseResponseJson.links.next).toBeDefined();
+
+        // Contenido
+        expect(objNeoBrowseResponseJson.near_earth_objects.length).toBeGreaterThan(0);
+        expect(objNeoBrowseResponseJson.near_earth_objects.length).toBeLessThanOrEqual(objNeoBrowseResponseJson.page.size);
+
+        const ids = objNeoBrowseResponseJson.near_earth_objects.map((n) => n.id);
+        expect(new Set(ids).size).toBe(ids.length);
     });
 });
 
@@ -82,7 +110,7 @@ test.describe('Negative test cases of NeoWs (Near Earth Object Web Service)', ()
       expect(response.status()).toBe(400);
     });
 
-    test('Verify Neo Feed API endpoint returns 403 Forbidden for unauthorized access', async ({ request }) => {
+    test('Verify Neo Feed API endpoint returns 403 Forbidden for missing API key', async ({ request }) => {
         const response = await request.get(neoFeedApiUrl, {
         params: { 
             start_date: '2026-10-01', 
@@ -93,7 +121,38 @@ test.describe('Negative test cases of NeoWs (Near Earth Object Web Service)', ()
         expect((await response.json()).error.code).toBe('API_KEY_MISSING');
     });
 
-    test('Verify Neo Look Up API endpoint returns http code 400 Bad Request for invalid API key', async ({ request }) => {
+        test('Neo Feed returns 403 when api_key is invalid', async ({ request }) => {
+        const response = await request.get(neoFeedApiUrl, {
+            params: { 
+                start_date: '2026-10-01', 
+                end_date: '2026-10-20', 
+                api_key: 'invalid_key_12345' },
+        });
+
+        expect(response.status()).toBe(403);
+        expect((await response.json()).error.code).toBe('API_KEY_INVALID');
+    });
+
+     const invalidDates: Array<{ name: string; value: string }> = [
+        { name: 'DD-MM-YYYY format', value: '28-10-2026' },
+        { name: 'slash separators', value: '2026/10/28' },
+        { name: 'non-date text', value: 'abc' },
+        { name: 'month out of range', value: '2026-13-01' },
+        { name: 'non-existent date (Feb 30)', value: '2026-02-30' },
+    ];
+
+    for (const { name, value } of invalidDates) {
+        test(`Neo Feed rejects an invalid start_date (${name})`, async ({ request }) => {
+            const response = await request.get(neoFeedApiUrl, {
+                params: { start_date: value, end_date: validRange.end_date, api_key: apiKey },
+            });
+
+            expect(response.status()).toBeGreaterThanOrEqual(400);
+            expect(response.status()).toBeLessThan(500);
+        });
+    }
+
+    test('Verify Neo Look Up API endpoint returns http code 403 Forbiddenfor invalid API key', async ({ request }) => {
         const response = await request.get(neoLookUpApiUrl, {
         params: { 
             start_date: '2026-10-01', 
@@ -125,5 +184,21 @@ test.describe('Negative test cases of NeoWs (Near Earth Object Web Service)', ()
 
         expect(response.status()).toBe(404);
         expect(response.ok()).toBeFalsy();
+    });
+
+    test('Neo Browse returns 403 when api_key is missing', async ({ request }) => {
+        const response = await request.get(neoBrowseApiUrl);
+
+        expect(response.status()).toBe(403);
+        expect((await response.json()).error.code).toBe('API_KEY_MISSING');
+    });
+
+    test('Neo Browse returns 403 when api_key is invalid', async ({ request }) => {
+        const response = await request.get(neoBrowseApiUrl, {
+            params: { api_key: 'invalid_key_12345' },
+        });
+
+        expect(response.status()).toBe(403);
+        expect((await response.json()).error.code).toBe('API_KEY_INVALID');
     });
 });
